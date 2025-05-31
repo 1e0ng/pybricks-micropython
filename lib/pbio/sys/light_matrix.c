@@ -9,6 +9,7 @@
 
 #include <contiki.h>
 
+#include <pbdrv/battery.h>
 #include <pbdrv/led.h>
 #include <pbio/error.h>
 #include <pbio/event.h>
@@ -47,21 +48,183 @@ static const pbio_light_matrix_funcs_t pbsys_hub_light_matrix_funcs = {
     .set_pixel = pbsys_hub_light_matrix_set_pixel,
 };
 
+static uint8_t battery_level_in_percent(uint16_t mvolts) {
+  // For Li-ion batteries:
+  // 8190 mV (4.095V) = 100%
+  // 7200 mV (3.6V) = 60%
+  // 6800 mV (3.4V) = 20%
+  // 6000 mV (3.0V) = 0%
+  if (mvolts >= 8190) {
+    return 100;
+  } else if (mvolts > 7200) {
+    // Linear interpolation between 7200 mV (60%) and 8190 mV (100%)
+    return 60 + ((mvolts - 7200) * 40) / 990;
+  } else if (mvolts > 6800) {
+    // Linear interpolation between 6800 mV (20%) and 7200 mV (60%)
+    return 20 + ((mvolts - 6800) * 40) / 400;
+  } else if (mvolts > 6000) {
+    // Linear interpolation between 6000 mV (0%) and 6800 mV (20%)
+    return ((mvolts - 6000) * 20) / 800;
+  } else {
+    return 0;
+  }
+}
+
+static void set_on_array_for_digit(bool on_array[5][5], uint8_t digit, uint8_t start_column) {
+  switch (digit) {
+    case 0:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 1:
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 2:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 3:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 4:
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 5:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 6:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 7:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 8:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[1][start_column+1] = true;
+    on_array[3][start_column] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column] = true;
+    on_array[4][start_column+1] = true;
+    break;
+    case 9:
+    on_array[0][start_column] = true;
+    on_array[0][start_column+1] = true;
+    on_array[1][start_column] = true;
+    on_array[1][start_column+1] = true;
+    on_array[2][start_column] = true;
+    on_array[2][start_column+1] = true;
+    on_array[3][start_column+1] = true;
+    on_array[4][start_column+1] = true;
+    break;
+  }
+}
+
+static void set_on_array(bool on_array[5][5], uint8_t percent) {
+    set_on_array_for_digit(on_array, percent / 10, 0);
+    set_on_array_for_digit(on_array, percent % 10, 3);
+}
+
 /**
  * Displays the idle UI. Has a square stop sign and selected slot on bottom row.
  *
  * @param brightness   Brightness (0--100%).
  */
 static void pbsys_hub_light_matrix_show_idle_ui(uint8_t brightness) {
-    for (uint8_t r = 0; r < pbsys_hub_light_matrix->size; r++) {
-        for (uint8_t c = 0; c < pbsys_hub_light_matrix->size; c++) {
-            bool is_on = r < 3 && c > 0 && c < 4;
+  bool on_array[5][5] = {{0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}};
+  uint16_t voltage_mv;
+  pbdrv_battery_get_voltage_now(&voltage_mv);
+  uint8_t percent = battery_level_in_percent(voltage_mv);
+
+  if (percent >= 100) {
+
+    /*
+    on_array[1][0] = true;
+    on_array[1][1] = true;
+    on_array[2][0] = true;
+    on_array[2][1] = true;
+    on_array[3][0] = true;
+    on_array[3][1] = true;
+
+    on_array[1][3] = true;
+    on_array[1][4] = true;
+    on_array[2][3] = true;
+    on_array[2][4] = true;
+    on_array[3][3] = true;
+    on_array[3][4] = true;
+    */
+
+
+    for (uint8_t start_column = 0; start_column < 5; start_column++) {
+        on_array[0][start_column] = true;
+        on_array[4][start_column] = true;
+        on_array[start_column][2] = true;
+    }
+  } else {
+    set_on_array(on_array, percent);
+  }
+
+  for (uint8_t r = 0; r < pbsys_hub_light_matrix->size; r++) {
+    for (uint8_t c = 0; c < pbsys_hub_light_matrix->size; c++) {
+      bool is_on = on_array[r][c];
             #if PBSYS_CONFIG_HMI_NUM_SLOTS
             is_on |= (r == 4 && c == pbsys_hmi_get_selected_program_slot());
             #endif
             pbsys_hub_light_matrix_set_pixel(pbsys_hub_light_matrix, r, c, is_on ? brightness : 0);
         }
-    }
+  }
 }
 
 void pbsys_hub_light_matrix_update_program_slot(void) {
