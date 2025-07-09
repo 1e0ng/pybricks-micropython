@@ -190,7 +190,6 @@ static void pbsys_hub_light_matrix_show_idle_ui(uint8_t brightness) {
 
   if (percent >= 100) {
 
-    /*
     on_array[1][0] = true;
     on_array[1][1] = true;
     on_array[2][0] = true;
@@ -204,14 +203,15 @@ static void pbsys_hub_light_matrix_show_idle_ui(uint8_t brightness) {
     on_array[2][4] = true;
     on_array[3][3] = true;
     on_array[3][4] = true;
-    */
 
 
+    /*
     for (uint8_t start_column = 0; start_column < 5; start_column++) {
         on_array[0][start_column] = true;
         on_array[4][start_column] = true;
         on_array[start_column][2] = true;
     }
+    */
   } else {
     set_on_array(on_array, percent);
   }
